@@ -1,0 +1,22 @@
+{
+  "camera": {
+    "index": 0,
+    "flip_horizontal": true
+  },
+  "simple_reaction": {
+    "trials": 12,
+    "angles_deg": [0, 45, 90, 135, 180, 225, 270, 315]
+  },
+  "choice_reaction": {
+    "trials": 12
+  },
+  "defense_reaction": {
+    "trials": 12
+  },
+  "moving_object": {
+    "trials": 12
+  },
+  "tracking_reaction": {
+    "trials": 3
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mean_reaction_ms": 295.3,
+  "sd_reaction_ms": 36.7,
+  "accuracy_percent": 97.8,
+  "shoulder_angle_left_mean": 72.1,
+  "shoulder_angle_right_mean": 71.8,
+  "elbow_angle_left_mean": 118.4,
+  "elbow_angle_right_mean": 117.9
+}
