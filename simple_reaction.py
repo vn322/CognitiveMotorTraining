@@ -1,10 +1,9 @@
-# blocks/simple_reaction.py
-import cv2
+# blocks/simple_reaction.py 
 import numpy as np
 import time
 import math
 import random
- 
+
 class SimpleReactionBlock:
     def __init__(self, config):
         self.config = config
@@ -20,12 +19,18 @@ class SimpleReactionBlock:
         self.timeout_limit = 2.0
         self.trials_total = config.get("simple_reaction", {}).get("trials", 12)
 
-    def get_shoulder_center(self, landmarks):
-        ls = landmarks.get('LEFT_SHOULDER')
-        rs = landmarks.get('RIGHT_SHOULDER')
-        if ls and rs:
-            return ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
-        return (640, 360)
+    def get_safe_position(self, frame_shape):
+        h, w = frame_shape
+        margin = min(w, h) // 3
+        edge = random.choice(['top', 'bottom', 'left', 'right'])
+        if edge == 'top':
+            return (random.randint(margin, w - margin), margin)
+        elif edge == 'bottom':
+            return (random.randint(margin, w - margin), h - margin)
+        elif edge == 'left':
+            return (margin, random.randint(margin, h - margin))
+        else:
+            return (w - margin, random.randint(margin, h - margin))
 
     def draw_skeleton(self, frame, landmarks):
         left_color = (76, 175, 80)
@@ -45,47 +50,27 @@ class SimpleReactionBlock:
                 cv2.circle(frame, p, 16, white, -1)
                 cv2.circle(frame, p, 14, color, -1)
 
-    def draw_axes(self, frame, center):
-        cx, cy = center
-        h, w = frame.shape[:2]
-        gray = (158, 158, 158)
-        cv2.line(frame, (cx, 0), (cx, h), gray, 1)
-        cv2.line(frame, (0, cy), (w, cy), gray, 1)
-
-    def stimulus_position(self, center, radius, angle_deg):
-        rad = math.radians(angle_deg)
-        x = int(center[0] + radius * math.cos(rad))
-        y = int(center[1] - radius * math.sin(rad))
-        return (x, y)
-
-    def classify_position(self, stim_pos, center):
-        cx, cy = center
-        dx = stim_pos[0] - cx
-        dy = stim_pos[1] - cy
-        return {
-            "left_of_midline": dx < 0,
-            "above_shoulder_line": dy < 0,
-            "quadrant": "upper-left" if dx < 0 and dy < 0 else
-                       "upper-right" if dx >= 0 and dy < 0 else
-                       "lower-left" if dx < 0 and dy >= 0 else "lower-right"
-        }
-
-    def detect_movement_start(self, joint_name, pos, t):
-        if not pos:
-            return False
+    def detect_movement_start_toward_stimulus(self, joint_name, wrist_pos, stim_pos, current_time):
+        if not wrist_pos or not stim_pos:
+            return False, 0.0, 0.0
         hist = self.joint_hist.setdefault(joint_name, [])
-        hist.append((pos[0], pos[1], t))
-        if len(hist) > 5: hist.pop(0)
-        if len(hist) < 3: return False
-        t0, t1, t2 = hist[-3][2], hist[-2][2], hist[-1][2]
-        dt1, dt2 = t1 - t0, t2 - t1
-        if dt1 < 0.001 or dt2 < 0.001: return False
-        v1x = (hist[-2][0] - hist[-3][0]) / dt1
-        v1y = (hist[-2][1] - hist[-3][1]) / dt1
-        v2x = (hist[-1][0] - hist[-2][0]) / dt2
-        v2y = (hist[-1][1] - hist[-2][1]) / dt2
-        acc = math.sqrt((v2x - v1x)**2 + (v2y - v1y)**2)
-        return acc > 400 and (abs(v2x) + abs(v2y)) > 150
+        hist.append((wrist_pos[0], wrist_pos[1], current_time))
+        if len(hist) < 5: return False, 0.0, 0.0
+        t0, t1 = hist[-2][2], hist[-1][2]
+        dt = t1 - t0
+        if dt < 0.001: return False, 0.0, 0.0
+        v_x = (hist[-1][0] - hist[-2][0]) / dt
+        v_y = (hist[-1][1] - hist[-2][1]) / dt
+        speed = math.hypot(v_x, v_y)
+        if speed < 100: return False, 0.0, 0.0
+        dx_target = stim_pos[0] - wrist_pos[0]
+        dy_target = stim_pos[1] - wrist_pos[1]
+        dist_target = math.hypot(dx_target, dy_target)
+        if dist_target < 1: return False, 0.0, 0.0
+        ux_target = dx_target / dist_target
+        uy_target = dy_target / dist_target
+        cos_angle = (v_x * ux_target + v_y * uy_target) / (speed + 1e-6)
+        return cos_angle > 0.8, cos_angle, current_time - dt
 
     def anatomical_joint(self, joint):
         flip = self.config.get("camera", {}).get("flip_horizontal", False)
@@ -119,9 +104,7 @@ class SimpleReactionBlock:
                 self.phase = "complete"
             return self.phase == "complete"
 
-        center = self.get_shoulder_center(landmarks)
         self.draw_skeleton(frame, landmarks)
-        self.draw_axes(frame, center)
 
         cv2.putText(frame, f"Trials: {self.current_trial} / {self.trials_total}", (10,50),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,0,0), 4)
@@ -129,18 +112,15 @@ class SimpleReactionBlock:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255,255,255), 2)
 
         if self.phase == "fixation":
-            cv2.putText(frame, "+", (center[0]-15, center[1]+15), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200,200,200), 2)
+            cv2.putText(frame, "+", (w//2-15, h//2+15), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200,200,200), 2)
             if current_time - self.trial_start_time > 0.5:
                 self.phase = "stimulus"
                 self.stimulus_show_time = current_time
-                angle = random.choice(self.config.get("simple_reaction", {}).get("angles_deg", [0,90,180,270]))
-                radius = min(w, h) * 0.4 - 80
-                self.stimulus_pos = self.stimulus_position(center, radius, angle)
-                self.pos_info = self.classify_position(self.stimulus_pos, center)
+                self.stimulus_pos = self.get_safe_position((h, w))
 
         elif self.phase == "stimulus":
             if current_time - self.stimulus_show_time > self.timeout_limit:
-                self.record_trial(2000.0, "timeout", "none", False)
+                self.record_trial(2000.0, "timeout", "none", 0.0, 0.0, False, 0.0)
                 self.phase = "feedback"
                 self.feedback_start = current_time
                 return False
@@ -153,9 +133,10 @@ class SimpleReactionBlock:
             wrists = {'LEFT_WRIST': landmarks.get('LEFT_WRIST'), 'RIGHT_WRIST': landmarks.get('RIGHT_WRIST')}
             if not self.movement_start_time:
                 for name, pos in wrists.items():
-                    if pos and self.detect_movement_start(name, pos, current_time):
-                        if current_time >= self.stimulus_show_time:
-                            self.movement_start_time = current_time
+                    if pos:
+                        is_start, _, t_start = self.detect_movement_start_toward_stimulus(name, pos, self.stimulus_pos, current_time)
+                        if is_start and current_time >= self.stimulus_show_time:
+                            self.movement_start_time = t_start
                             break
 
             touched_joint = None
@@ -173,7 +154,8 @@ class SimpleReactionBlock:
                 movement = max(0, touch_time - (self.movement_start_time or self.stimulus_show_time))
                 total = latency + movement
                 anatomical = self.anatomical_joint(touched_joint)
-                self.record_trial(total * 1000, dist, anatomical, True)
+                _, economy, _ = self.detect_movement_start_toward_stimulus(touched_joint, landmarks[touched_joint], self.stimulus_pos, touch_time)
+                self.record_trial(total * 1000, dist, anatomical, latency * 1000, movement * 1000, True, economy)
                 self.phase = "feedback"
                 self.feedback_start = current_time
 
@@ -194,9 +176,7 @@ class SimpleReactionBlock:
 
         return self.phase == "complete" and self.signal_phase == "end"
 
-    def record_trial(self, total_rt, accuracy, joint, correct):
-        latency = max(0, total_rt - (accuracy if isinstance(accuracy, (int,float)) else 0))
-        movement = total_rt - latency
+    def record_trial(self, total_rt, accuracy, joint, latency, movement, correct, economy):
         trial = {
             "trial": self.current_trial + 1,
             "latency_ms": round(latency, 1),
@@ -205,9 +185,7 @@ class SimpleReactionBlock:
             "accuracy_mm": round(accuracy, 1) if isinstance(accuracy, (int,float)) else accuracy,
             "joint_used": joint,
             "correct": correct,
-            "left_of_midline": self.pos_info["left_of_midline"],
-            "above_shoulder_line": self.pos_info["above_shoulder_line"],
-            "quadrant": self.pos_info["quadrant"]
+            "movement_economy": round(economy, 2)
         }
         self.trial_data.append(trial)
 

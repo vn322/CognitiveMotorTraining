@@ -1,4 +1,4 @@
-# blocks/tracking_reaction.py — РЕАКЦИЯ СЛЕЖЕНИЯ
+# blocks/tracking_reaction.py 
 import cv2
 import numpy as np
 import time
