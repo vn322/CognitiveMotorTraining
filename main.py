@@ -1,9 +1,10 @@
-# main.py
+# main.py — ФИНАЛЬНАЯ ВЕРСИЯ: без логирования, без debug.log
 import sys
+import os
 import cv2
 import numpy as np
+import pandas as pd
 import json
-import os
 import time
 import mediapipe as mp
 from datetime import datetime
@@ -51,19 +52,7 @@ def load_config():
         return default_config
 
 CONFIG = load_config()
-LANDMARKS_MAP = {'HEAD':0, 'LEFT_SHOULDER':11, 'RIGHT_SHOULDER':12, 'LEFT_WRIST':15, 'RIGHT_WRIST':16}
-
-def _patch_mediapipe():
-    if hasattr(sys, '_MEIPASS'):
-        import mediapipe as mp
-        original_get_path = mp.solutions.pose._get_path
-        def patched_get_path(path):
-            full = os.path.join(sys._MEIPASS, 'mediapipe', path)
-            if os.path.exists(full):
-                return full
-            return original_get_path(path)
-        mp.solutions.pose._get_path = patched_get_path
-_patch_mediapipe()
+LANDMARKS_MAP = {'HEAD':0, 'LEFT_SHOULDER':11, 'RIGHT_SHOULDER':12,     'LEFT_ELBOW': 13, 'RIGHT_ELBOW': 14, 'LEFT_WRIST':15, 'RIGHT_WRIST':16}
 
 class VideoThread(QThread):
     frame_ready = pyqtSignal(np.ndarray)
@@ -72,31 +61,43 @@ class VideoThread(QThread):
     def __init__(self):
         super().__init__()
         self.running = True
-        self.pose = mp.solutions.pose.Pose(
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
+        self.cap = None
+        self.pose = None
         self.block = None
         self.block_name = ""
+
+        try:
+            self.pose = mp.solutions.pose.Pose(
+                static_image_mode=False,
+                model_complexity=0,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+        except:
+            pass
 
     def set_block(self, block, name):
         self.block = block
         self.block_name = name
 
     def run(self):
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            for i in range(1, 5):
-                cap = cv2.VideoCapture(i)
-                if cap.isOpened():
+        self.cap = None
+        for i in range(5):
+            try:
+                self.cap = cv2.VideoCapture(i)
+                if self.cap.isOpened():
                     break
-            else:
-                self.block_finished.emit("Error", [])
-                return
+            except:
+                pass
+            time.sleep(0.5)
+
+        if self.cap is None or not self.cap.isOpened():
+            self.block_finished.emit("Error", [])
+            return
 
         try:
-            while self.running and cap.isOpened():
-                ret, frame = cap.read()
+            while self.running and self.cap.isOpened():
+                ret, frame = self.cap.read()
                 if not ret:
                     time.sleep(0.01)
                     continue
@@ -127,10 +128,12 @@ class VideoThread(QThread):
 
                 self.frame_ready.emit(frame)
                 time.sleep(0.01)
-        except Exception as e:
-            print(f"[VideoThread] {e}")
+
+        except:
+            pass
         finally:
-            cap.release()
+            if self.cap:
+                self.cap.release()
 
     def stop(self):
         self.running = False
@@ -214,7 +217,13 @@ class MainWindow(QMainWindow):
         self.video_label.setPixmap(QPixmap.fromImage(qt).scaled(860, 640))
 
     def start_test(self, tag):
+        QApplication.processEvents()
         if self.current: return
+
+        if self.video_thread.pose is None:
+            QMessageBox.warning(self, "Ошибка", "Mediapipe не загружен.")
+            return
+
         mapping = {
             "simple_reaction": (SimpleReactionBlock(CONFIG), "Simple Reaction"),
             "simple_choice": (ChoiceReactionBlock(CONFIG, mode="simple"), "Choice: Simple"),
@@ -251,31 +260,31 @@ class MainWindow(QMainWindow):
         self.btn_export.setEnabled(True)
 
     def export_with_report(self):
+        QApplication.processEvents()
         timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M")
-        csv_path = f"report_{timestamp}.csv"
+        path = f"report_{timestamp}.csv"
 
         try:
-            # === Нормализация имён полей ===
             field_map = {
-                "trial": "trial",                 
-                "latency_ms": "latency_ms",
-                "movement_ms": "movement_ms",
-                "total_rt_ms": "total_rt_ms",
-                "rt_ms": "total_rt_ms",
-                "accuracy_mm": "accuracy_mm",     
-                "displacement_mm": "displacement_mm",
-                "timing_error_ms": "timing_error_ms",
-                "tracking_error_mm": "tracking_error_mm",
-                "coverage_%": "coverage_%",
-                "coverage": "coverage_%",
-                "prediction_error_px": "prediction_error_px",
-                "update_latency_ms": "update_latency_ms",
-                "adaptation_rate": "adaptation_rate",
-                "movement_economy": "movement_economy",
-                "joint_used": "joint",
-                "joint": "joint",
-                "correct": "correct",
-                "success": "correct",
+                "trial": "Trial",
+                "latency_ms": "Latency_ms",
+                "movement_ms": "Movement_ms",
+                "total_rt_ms": "Total_RT_ms",
+                "rt_ms": "Total_RT_ms",
+                "accuracy_mm": "Accuracy_mm",
+                "displacement_mm": "Displacement_mm",
+                "timing_error_ms": "Timing_error_ms",
+                "tracking_error_mm": "Tracking_error_mm",
+                "coverage_%": "Coverage_%",
+                "coverage": "Coverage_%",
+                "prediction_error_px": "Prediction_error_px",
+                "update_latency_ms": "Update_latency_ms",
+                "adaptation_rate": "Adaptation_rate",
+                "movement_economy": "Movement_economy",
+                "joint_used": "Joint",
+                "joint": "Joint",
+                "correct": "Correct",
+                "success": "Correct",
             }
 
             all_fields = set()
@@ -286,13 +295,12 @@ class MainWindow(QMainWindow):
                     norm_r = {"Block": block_name}
                     for k, v in r.items():
                         k_clean = k.replace(" ", "_").strip().lower()
-                        k_norm = field_map.get(k_clean, k_clean.lower())
+                        k_norm = field_map.get(k_clean, k_clean.title())
                         norm_r[k_norm] = v
                     norm_list.append(norm_r)
                     all_fields.update(norm_r.keys())
                 norm_results.append((block_name, norm_list))
 
-            # Фиксированный порядок
             base_order = [
                 "Block", "Trial", "Latency_ms", "Movement_ms", "Total_RT_ms",
                 "Accuracy_mm", "Displacement_mm", "Timing_error_ms",
@@ -307,9 +315,8 @@ class MainWindow(QMainWindow):
                     all_fields.discard(f)
             fieldnames.extend(sorted(all_fields))
 
-            # Запись CSV
             import csv
-            with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 for block_name, norm_list in norm_results:
@@ -333,17 +340,15 @@ class MainWindow(QMainWindow):
                         row["Block"] = r["Block"]
                         writer.writerow(row)
 
-            # Генерация PDF через report_generator
             from report_generator import generate_pdf_report
-            pdf_path = generate_pdf_report(csv_path)
+            pdf_path = generate_pdf_report(path)
             if pdf_path and os.path.exists(pdf_path):
-                QMessageBox.information(self, "Success", f"Сохранено:\n{csv_path}\n{pdf_path}")
+                QMessageBox.information(self, "Success", f"Сохранено:\n{path}\n{pdf_path}")
             else:
-                QMessageBox.warning(self, "Ошибка", "PDF не создан. См. консоль.")
+                QMessageBox.warning(self, "Ошибка", "PDF не создан.")
 
         except Exception as e:
-            import traceback
-            QMessageBox.critical(self, "Error", f"Export failed:\n{e}\n{traceback.format_exc()}")
+            QMessageBox.critical(self, "Error", f"Export failed:\n{e}")
 
     def closeEvent(self, e):
         self.video_thread.stop()

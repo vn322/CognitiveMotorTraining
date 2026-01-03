@@ -21,12 +21,35 @@ class CombinedReactionBlock:
         self.color_swapped = [False, False]
 
     def draw_skeleton(self, frame, landmarks):
-        left_color = (76, 175, 80)
-        right_color = (255, 193, 7)
+        left_color = (76, 175, 80)    # зелёный — левая
+        right_color = (255, 193, 7)   # жёлтый — правая
         white = (255, 255, 255)
-        def g(n): return landmarks.get(n)
-        for name, color in [('LEFT_WRIST', left_color), ('RIGHT_WRIST', right_color)]:
-            p = g(name)
+        gray = (200, 200, 200)
+
+        def g(n):
+            return landmarks.get(n)
+
+        # Плечи
+        ls, rs = g('LEFT_SHOULDER'), g('RIGHT_SHOULDER')
+        # Локти
+        le, re = g('LEFT_ELBOW'), g('RIGHT_ELBOW')
+        # Запястья
+        lw, rw = g('LEFT_WRIST'), g('RIGHT_WRIST')
+
+        # Соединения
+        if ls and le:
+            cv2.line(frame, ls, le, left_color, 2)
+        if le and lw:
+            cv2.line(frame, le, lw, left_color, 2)
+        if rs and re:
+            cv2.line(frame, rs, re, right_color, 2)
+        if re and rw:
+            cv2.line(frame, re, rw, right_color, 2)
+        if ls and rs:
+            cv2.line(frame, ls, rs, gray, 2)
+
+        # Запястья (круги с обводкой)
+        for p, color in [(lw, left_color), (rw, right_color)]:
             if p:
                 cv2.circle(frame, p, 16, white, -1)
                 cv2.circle(frame, p, 14, color, -1)

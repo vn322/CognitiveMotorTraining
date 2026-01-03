@@ -1,4 +1,13 @@
-# report_generator.py  
+# report_generator.py
+import sys
+import os
+
+# ✅ Динамическое добавление путей для --onefile
+if getattr(sys, 'frozen', False):
+    # Запуск из .exe
+    bundle_dir = sys._MEIPASS
+    sys.path.insert(0, bundle_dir)
+
 import pandas as pd
 import numpy as np
 from reportlab.lib import colors
@@ -7,22 +16,30 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-import os
 
-from utils.metrics import calculate_metrics
-from utils.style import create_table_style
-
+# ✅ Шрифт из _MEIPASS
 def load_font():
     try:
-        font_path = 'DejaVuSans.ttf'
-        if not os.path.exists(font_path):
-            import sys
-            if hasattr(sys, '_MEIPASS'):
-                font_path = os.path.join(sys._MEIPASS, 'DejaVuSans.ttf')
+        import tempfile
+        import shutil
+
+        font_name = 'DejaVuSans.ttf'
+        font_path = font_name
+
+        if getattr(sys, 'frozen', False):
+            bundled_font = os.path.join(sys._MEIPASS, font_name)
+            if os.path.exists(bundled_font):
+                temp_font = os.path.join(tempfile.gettempdir(), font_name)
+                shutil.copy2(bundled_font, temp_font)
+                font_path = temp_font
+
         pdfmetrics.registerFont(TTFont('DejaVuSans', font_path))
         return 'DejaVuSans'
     except:
         return 'Helvetica'
+
+from utils.metrics import calculate_metrics
+from utils.style import create_table_style
 
 def safe_text(s):
     if pd.isna(s) or s is None:
@@ -31,15 +48,15 @@ def safe_text(s):
 
 def generate_pdf_report(csv_path) -> str:
     try:
+        FONT_NAME = load_font()
         df = pd.read_csv(csv_path, encoding='utf-8-sig')
         
-        # ✅ КЛЮЧЕВОЕ: нормализация имён колонок ДО всего остального
+        # Нормализация колонок
         df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
         if 'block' not in df.columns:
             raise ValueError(f"Колонка 'block' отсутствует. Доступные: {list(df.columns)}")
 
         metrics = calculate_metrics(df)
-        FONT_NAME = load_font()
         pdf_path = csv_path.replace('.csv', '_analysis.pdf')
 
         doc = SimpleDocTemplate(pdf_path, pagesize=A4, topMargin=0.6*72, bottomMargin=0.5*72)
@@ -54,17 +71,17 @@ def generate_pdf_report(csv_path) -> str:
         story.append(Paragraph("<i>Отчёт собран автоматически. Требует осмысления и верификации экспертом.</i>", small_style))
         story.append(Spacer(1, 10))
 
-        # 1. Ключевые расчётные метрики 
+        # 1. Ключевые расчётные метрики — с IT
         story.append(Paragraph("1. Ключевые расчётные метрики", h1_style))
         metrics_data = [
             ["Метрика", "Значение", "Норма", "Интерпретация"],
             ["Когнитивная\nдоля (CD)", f"{metrics['cognitive_ratio']:.2f}", "0.20–0.35", "Доля времени на\nпринятие решения"],
             ["Тактическая\nактивность (TA)", f"{metrics['tactical_activity']:.2f}", "0.3–0.6", "Доля быстрых\nрешений (RT < 500 мс)"],
             ["Адаптивный\nдефицит (AD)", f"{metrics['adaptive_deficit']:.2f}", "<0.30", "Неспособность\nадаптироваться к\nнеожиданностям"],
-            ["Индекс\nизбегания (IА)", f"{metrics['protective_inhibition']:.2f}", ">0.70", "Способность\nизбегать\nвнезапных помех"],
+            ["Индекс\nизбегания (IT)", f"{metrics['protective_inhibition']:.2f}", ">0.70", "Способность\nудерживать\nреакцию при помехе"],
             ["Моторная\nэкономичность (ME)", f"{metrics['motor_economy']:.2f}", ">0.85", "Эффективность\nдвижения"],
             ["Латеральный\nдисбаланс (LD)", f"{metrics['lateral_imbalance']:.2f}", "<0.20", "Асимметрия\nлевой и правой руки"],
-            ["Тактическая\nгибкость (ТG)", f"{metrics['zone_flexibility']:.2f}", "1.5–2.5", "Разнообразие\nуспешных стратегий"]
+            ["Тактическая\nгибкость (ZG)", f"{metrics['zone_flexibility']:.2f}", "1.5–2.5", "Разнообразие\nуспешных стратегий"]
         ]
         table = Table(metrics_data, colWidths=[120, 60, 70, 180], rowHeights=[24] + [36]*7)
         table.setStyle(create_table_style())
@@ -88,7 +105,7 @@ def generate_pdf_report(csv_path) -> str:
             story.append(Paragraph("• Сбалансированное межполушарное взаимодействие.", normal_style))
         story.append(Spacer(1, 12))
 
-        # 3. Активность в различных условиях (тестах) 
+        # 3. Активность в различных условиях (тестах) — ✅ ОБЕ КОМБИНИРОВАННЫЕ РЕАКЦИИ
         story.append(Paragraph("3. Активность в различных условиях (тестах)", h1_style))
         zone_data_simple = [["Условие", "Попыток", "Успех, %", "Ср. RT, мс", "CD"]]
         for b in sorted(metrics['blocks_no_tr']):
@@ -97,15 +114,15 @@ def generate_pdf_report(csv_path) -> str:
             success = (sub['correct'] == 'Yes').sum()
             rt_b = sub['total_rt_ms'].mean()
             
-            # ✅ Безопасное извлечение latency_ms с fallback
-            latency_b = 0.2 * rt_b  # fallback: 20% latency, 80% movement
+            # Безопасное извлечение latency_ms с fallback
+            latency_b = 0.2 * rt_b
             if 'latency_ms' in sub.columns:
                 lat_series = pd.to_numeric(sub['latency_ms'], errors='coerce')
                 if lat_series.notna().any():
                     latency_b = lat_series.mean()
             cd_b = (latency_b / rt_b) if rt_b > 0 else 0.2
             
-            # ✅ Перенос для комбинированных реакций
+            # Перенос для комбинированных реакций
             display_name = b
             if "selection + tracking" in b.lower():
                 display_name = "Combined Reaction:\nSelection + Tracking"
@@ -122,10 +139,10 @@ def generate_pdf_report(csv_path) -> str:
         table.setStyle(create_table_style())
         story.append(table)
         story.append(Spacer(1, 8))
-        story.append(Paragraph(f"• Зональная гибкость: {metrics['zone_flexibility']:.2f} → {'оптимальная' if 1.5 <= metrics['zone_flexibility'] <= 2.5 else 'низкая' if metrics['zone_flexibility'] < 1.5 else 'избыточная'}.", normal_style))
+        story.append(Paragraph(f"• Тактическая гибкость: {metrics['zone_flexibility']:.2f} → {'оптимальная' if 1.5 <= metrics['zone_flexibility'] <= 2.5 else 'низкая' if metrics['zone_flexibility'] < 1.5 else 'избыточная'}.", normal_style))
         story.append(Spacer(1, 12))
 
-        # 4. Пространственное распределение активности (3×3) 
+        # 4. Пространственное распределение активности (3×3)
         story.append(Paragraph("4. Пространственное распределение активности (3×3)", h1_style))
         spatial_table = [["Зона", "Попыток", "% от общ.", "Ср. RT, мс", "Успех, %", "Домин.\nрука"]]
         for row in metrics['spatial_data']:
@@ -150,15 +167,15 @@ def generate_pdf_report(csv_path) -> str:
                 story.append(Paragraph("• Удовлетворительное совпадение с траекторией.", normal_style))
             story.append(Spacer(1, 12))
 
-        # 6. Рекомендации
-        story.append(Paragraph("6. Тактический диагноз и рекомендации", h1_style))
+        # 6. Тактический диагноз и рекомендации
+        story.append(Paragraph("6. Общие рекомендации", h1_style))
         diag = []
         if metrics['adaptive_deficit'] > 0.7:
-            diag.append("• Низкая адаптивность: отсутствие предиктивного анализа ситуации.")
+            diag.append("• Низкая адаптивность: слабость предиктивного компонента.")
         if metrics['lateral_imbalance'] > 0.3:
             diag.append(f"• Ярко выраженная латеральность: доминирование { 'правой' if metrics['rt_right'] < metrics['rt_left'] else 'левой' } руки.")
         if metrics['protective_inhibition'] < 0.5:
-            diag.append("• Низкий уровень торможения: трудности с подавлением импульсивных реакций при помехах.")
+            diag.append("• Низкий уровень избегания угроз.")
         if metrics['tr_error_mean'] and metrics['tr_error_mean'] > 80:
             diag.append("• Слабая способность к плавному слежению за динамическим объектом.")
         if not diag:
@@ -171,14 +188,14 @@ def generate_pdf_report(csv_path) -> str:
 
         recs = []
         if metrics['adaptive_deficit'] > 0.7:
-            recs.append("→ Добавить упражнений в условиях требующих адаптивности».")
+            recs.append("→ Добавить упражнений на предиктивный компонент принятия решения.")
         if metrics['lateral_imbalance'] > 0.3:
             weaker = "левой" if metrics['rt_left'] > metrics['rt_right'] else "правой"
             recs.append(f"→ Увеличить долю задач с {weaker} рукой до 60%.")
         if metrics['protective_inhibition'] < 0.5:
-            recs.append("→ Ввести тренировку «ложные старты».")
+            recs.append("→ Ввести режим «ложные старты» (20% триалов без стимула): касание = ошибка.")
         if metrics['tr_error_mean'] and metrics['tr_error_mean'] > 80:
-            recs.append("→ Тренировку слежения за движущимися объектами лучше начинать с медленных движений, постепенно усложняя задачи.")
+            recs.append("→ Тренировка отслеживания объекта требует отдельного внимания.")
 
         if recs:
             story.append(Paragraph("Рекомендации:", h1_style))
@@ -186,7 +203,7 @@ def generate_pdf_report(csv_path) -> str:
                 story.append(Paragraph(f"• {r}", normal_style))
 
         story.append(Spacer(1, 20))
-        story.append(Paragraph("Всегда сверяйтесь с данными из CSV отчёта", ParagraphStyle('Footer', fontSize=9, alignment=1, fontName=FONT_NAME)))
+        story.append(Paragraph("Для корректной оценки данные этого отчёта должны соспоставляться как с данными из CSV отчёта, так и с визуальным наблюдением за прохождением тестов", ParagraphStyle('Footer', fontSize=9, alignment=1, fontName=FONT_NAME)))
 
         doc.build(story)
         return pdf_path
